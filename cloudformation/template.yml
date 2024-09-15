@@ -1,0 +1,176 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  # Crear un rol IAM para las funciones Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:*
+                  - dynamodb:*
+                Resource: "*"
+
+  EntregasTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Entregas
+      AttributeDefinitions:
+        - AttributeName: pedido_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pedido_id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+
+  MonitoreoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Monitoreo
+      AttributeDefinitions:
+        - AttributeName: pedido_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pedido_id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+
+  EntregasApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: EntregasApi
+      Description: API para gestionar entregas
+
+  EntregasApiRootMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !GetAtt EntregasApi.RootResourceId
+      RestApiId: !Ref EntregasApi
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${EntregasLambda.Arn}/invocations
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: "Empty"
+
+  MonitoreoApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: MonitoreoApi
+      Description: API para monitoreo
+
+  MonitoreoApiRootMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !GetAtt MonitoreoApi.RootResourceId
+      RestApiId: !Ref MonitoreoApi
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MonitoreoLambda.Arn}/invocations
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: "Empty"
+
+  EntregasLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: "EntregasFunction"
+      Handler: src/entregas/infrastructure/lambda_handler.lambda_handler
+      Runtime: python3.8
+      Code:
+        S3Bucket: "my-bucket"
+        S3Key: "entregas.zip"
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          ENTREGAS_TABLE_NAME: "Entregas"
+
+  MonitoreoLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: "MonitoreoFunction"
+      Handler: src/monitoreo/infrastructure/lambda_handler.lambda_handler
+      Runtime: python3.8
+      Code:
+        S3Bucket: "my-bucket"
+        S3Key: "monitoreo.zip"
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          MONITOREO_TABLE_NAME: "Monitoreo"
+
+  LambdaApiPermissionEntregas:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref EntregasLambda
+      Principal: apigateway.amazonaws.com
+
+  LambdaApiPermissionMonitoreo:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref MonitoreoLambda
+      Principal: apigateway.amazonaws.com
+
+  DeploymentEntregas:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: EntregasApiRootMethod
+    Properties:
+      RestApiId: !Ref EntregasApi
+      StageName: prod
+
+  DeploymentMonitoreo:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: MonitoreoApiRootMethod
+    Properties:
+      RestApiId: !Ref MonitoreoApi
+      StageName: prod
+
+Outputs:
+  EntregasApiUrl:
+    Description: "URL for the Entregas API"
+    Value: !Sub "http://${EntregasApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+  MonitoreoApiUrl:
+    Description: "URL for the Monitoreo API"
+    Value: !Sub "http://${MonitoreoApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+  EntregasTableName:
+    Description: "DynamoDB table name for Entregas"
+    Value: !Ref EntregasTable
+  MonitoreoTableName:
+    Description: "DynamoDB table name for Monitoreo"
+    Value: !Ref MonitoreoTable
